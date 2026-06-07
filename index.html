@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Boss Phase 2 - Perfect R-Key Restart & WASD Controls</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #fff;
+            background: #000;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        #startMessage {
+            position: absolute;
+            color: #aaa;
+            font-size: 12px;
+            bottom: 10px;
+            background: rgba(0,0,0,0.5);
+            padding: 2px 5px;
+            border-radius: 3px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="400" height="600"></canvas>
+<div id="startMessage">※画面を一度クリックすると音が鳴るようになります</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let gameState = "PLAYING"; 
+let score = 0;
+let animationId = null; // 【新規】ループ管理用ID
+
+const keys = {};
+window.addEventListener("keydown", e => {
+    keys[e.code] = true;
+    
+    // 【修正】ゲームオーバーまたはクリア時に「KeyR」が押されたら確実にリスタート関数を呼ぶ
+    if ((gameState === "GAMEOVER" || gameState === "CLEAR") && e.code === "KeyR") {
+        resetGame();
+    }
+});
+window.addEventListener("keyup", e => keys[e.code] = false);
+
+// --- ?? 効果音再生システム ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(type) {
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    const now = audioCtx.currentTime;
+
+    if (type === "shoot") {
+        osc.type = "square";
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.exponentialRampToValueAtTime(400, now + 0.08);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.08);
+        osc.start(now);
+        osc.stop(now + 0.08);
+    } else if (type === "explosion") {
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.linearRampToValueAtTime(40, now + 0.15);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.15);
+        osc.start(now);
+        osc.stop(now + 0.15);
+    } else if (type === "big_explosion") {
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.linearRampToValueAtTime(20, now + 0.4);
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.4);
+        osc.start(now);
+        osc.stop(now + 0.4);
+    } else if (type === "hit") {
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.setValueAtTime(900, now + 0.03);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.05);
+        osc.start(now);
+        osc.stop(now + 0.05);
+    } else if (type === "gameover") {
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.linearRampToValueAtTime(60, now + 0.6);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.6);
+        osc.start(now);
+        osc.stop(now + 0.6);
+    } else if (type === "phase2") {
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.linearRampToValueAtTime(1200, now + 0.4);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.4);
+        osc.start(now);
+        osc.stop(now + 0.4);
+    }
+}
+
+// 自機の設定（円）
+const player = {
+    x: canvas.width / 2, 
+    y: canvas.height - 50,
+    radius: 15,          
+    speed: 5,
+    cooldown: 0
+};
+
+// ボスの設定（台形）
+let boss = {
+    active: false,
+    phase: 1,           
+    x: canvas.width / 2 - 50,
+    y: -100,
+    targetY: 80,
+    width: 100, 
+    topWidth: 60, 
+    height: 45,
+    speed: 2,
+    dir: 1,
+    hp: 160,       
+    maxHp: 160,    
+    cooldown: 0,
+    stateTimer: 0,      
+    isShootingPhase: true,
+    isDead: false,
+    deathTimer: 0,
+    nextExplosionDelay: 0,
+    explosionCount: 0
+};
+
+// 配列の初期化
+let playerBullets = [];
+let enemyBullets = [];
+let enemies = [];
+let particles = []; 
+let enemyTimer = 0;
+
+// 【修正】Rキーリスタートを完全に動作させるためのゲーム初期化関数
+function resetGame() {
+    // 既存のループアニメーションを確実に一度止める
+    if (animationId) {
+        cancelAnimationFrame(animationId);
+    }
+
+    // 状態とパラメータをすべて初期化
+    gameState = "PLAYING";
+    score = 0;
+    player.x = canvas.width / 2;
+    player.y = canvas.height - 50;
+    player.cooldown = 0;
+    
+    boss = {
+        active: false,
+        phase: 1,           
+        x: canvas.width / 2 - 50,
+        y: -100,
+        targetY: 80,
+        width: 100, 
+        topWidth: 60, 
+        height: 45,
+        speed: 2,
+        dir: 1,
+        hp: 160,       
+        maxHp: 160,    
+        cooldown: 0,
+        stateTimer: 0,      
+        isShootingPhase: true,
+        isDead: false,
+        deathTimer: 0,
+        nextExplosionDelay: 0,
+        explosionCount: 0
+    };
+    
+    playerBullets = [];
+    enemyBullets = [];
+    enemies = [];
+    particles = [];
+    enemyTimer = 0;
+
+    // キー入力状態も一度クリア
+    for (let key in keys) {
+        keys[key] = false;
+    }
+
+    // ループを再始動
+    gameLoop();
+}
+
+function createExplosion(x, y, color, count = 8, speedMax = 3) {
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
+        const speed = 1 + Math.random() * speedMax;
+        particles.push({
+            x: x,
+            y: y,
+            vx: Math.sin(angle) * speed,
+            vy: Math.cos(angle) * speed,
+            radius: 2 + Math.random() * 3,
+            alpha: 1,
+            decay: 0.02 + Math.random() * 0.03, 
+            color: color
+        });
+    }
+}
+
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === "PLAYING") {
+        update();
+        draw();
+        animationId = requestAnimationFrame(gameLoop); // IDを保存
+    } else if (gameState === "GAMEOVER") {
+        drawGameOver();
+        animationId = requestAnimationFrame(gameLoop); // 画面遷移後も描画更新のために維持
+    } else if (gameState === "CLEAR") {
+        drawGameClear();
+        animationId = requestAnimationFrame(gameLoop);
+    }
+}
+
+function update() {
+    // 10000点を超えたらボス出現
+    if (score >= 10000 && !boss.active && boss.phase === 1 && boss.hp > 0) {
+        boss.active = true;
+    }
+
+    // 自機の移動制限（矢印キー ＆ WASDキー）
+    if ((keys["ArrowLeft"] || keys["KeyA"]) && player.x > player.radius) player.x -= player.speed;
+    if ((keys["ArrowRight"] || keys["KeyD"]) && player.x < canvas.width - player.radius) player.x += player.speed;
+    if ((keys["ArrowUp"] || keys["KeyW"]) && player.y > player.radius) player.y -= player.speed;
+    if ((keys["ArrowDown"] || keys["KeyS"]) && player.y < canvas.height - player.radius) player.y += player.speed;
+
+    // 自機の弾発射（3way）
+    if (player.cooldown > 0) player.cooldown--;
+    if (keys["Space"] && player.cooldown === 0) {
+        const bulletSpeed = 8;
+        const angles = [0, -0.2, 0.2];
+        angles.forEach(angle => {
+            playerBullets.push({
+                x: player.x,
+                y: player.y - player.radius,
+                radius: 4,
+                vx: Math.sin(angle) * bulletSpeed,
+                vy: -Math.cos(angle) * bulletSpeed,
+                toRemove: false 
+            });
+        });
+        
+        playSound("shoot");
+        player.cooldown = 6;
+    }
+
+    // 自機の弾の移動
+    playerBullets.forEach(b => {
+        b.x += b.vx;
+        b.y += b.vy;
+        if (b.y < 0 || b.x < 0 || b.x > canvas.width) {
+            b.toRemove = true;
+        }
+    });
+
+    // 敵の弾の移動と自機への衝突判定
+    enemyBullets.forEach(b => {
+        b.x += b.vx;
+        b.y += b.vy;
+
+        const dx = b.x - player.x;
+        const dy = b.y - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < player.radius + b.radius) {
+            playSound("gameover");
+            gameState = "GAMEOVER";
+        }
+    });
+    enemyBullets = enemyBullets.filter(b => b.y <= canvas.height && b.x >= 0 && b.x <= canvas.width);
+
+    // --- 通常の敵の処理 ---
+    if (!boss.active) {
+        enemyTimer++;
+        if (enemyTimer % 10 === 0) { 
+            enemies.push({
+                startX: Math.random() * (canvas.width - 60) + 30,
+                y: -30,
+                width: 30,  
+                height: 30, 
+                speed: 2 + Math.random() * 2,
+                angle: Math.random() * Math.PI,
+                waveSpeed: 0.03 + Math.random() * 0.03,
+                waveRange: 30 + Math.random() * 30,
+                shootCooldown: Math.random() * 20 + 10,
+                toRemove: false
+            });
+        }
+    }
+
+    // 通常の敵（三角形）の移動と判定
+    enemies.forEach(enemy => {
+        enemy.y += enemy.speed;
+        enemy.angle += enemy.waveSpeed;
+        enemy.x = enemy.startX + Math.sin(enemy.angle) * enemy.waveRange;
+
+        // 敵の反撃
+        enemy.shootCooldown--;
+        if (enemy.shootCooldown <= 0 && enemy.y > 0 && enemy.y < canvas.height - 200) {
+            enemyBullets.push({
+                x: enemy.x,
+                y: enemy.y + enemy.height / 2,
+                vx: 0,
+                vy: 4,
+                radius: 4,
+                color: "#f1c40f" 
+            });
+            enemy.shootCooldown = 70; 
+        }
+
+        // 自機との衝突判定
+        if (
+            enemy.x - enemy.width/2 < player.x + player.radius &&
+            enemy.x + enemy.width/2 > player.x - player.radius &&
+            enemy.y - enemy.height/2 < player.y + player.radius &&
+            enemy.y + enemy.height/2 > player.y - player.radius
+        ) {
+            playSound("gameover");
+            gameState = "GAMEOVER";
+        }
+
+        // 自機弾との衝突判定
+        playerBullets.forEach(bullet => {
+            if (!bullet.toRemove &&
+                bullet.x > enemy.x - enemy.width/2 && bullet.x < enemy.x + enemy.width/2 &&
+                bullet.y > enemy.y - enemy.height/2 && bullet.y < enemy.y + enemy.height/2
+            ) {
+                enemy.toRemove = true; 
+                bullet.toRemove = true;
+                score += 100;
+                playSound("explosion");
+                createExplosion(enemy.x, enemy.y, "#e74c3c", 12, 4);
+            }
+        });
+    });
+    
+    enemies = enemies.filter(enemy => enemy.y <= canvas.height && !enemy.toRemove);
+
+    // --- ボスの処理 ---
+    if (boss.active) {
+        if (!boss.isDead) {
+            if (boss.y < boss.targetY) {
+                boss.y += 1; 
+            } else {
+                // 左右移動
+                const currentSpeed = boss.phase === 1 ? boss.speed : boss.speed * 1.3;
+                boss.x += currentSpeed * boss.dir;
+                if (boss.x <= 10 || boss.x >= canvas.width - boss.width - 10) {
+                    boss.dir *= -1;
+                }
+
+                if (boss.cooldown > 0) {
+                    boss.cooldown--;
+                }
+
+                // --- 【第1形態】ワーム狙撃弾 ---
+                if (boss.phase === 1) {
+                    boss.stateTimer++;
+                    if (boss.isShootingPhase && boss.stateTimer > 180) {
+                        boss.isShootingPhase = false;
+                        boss.stateTimer = 0;
+                    } else if (!boss.isShootingPhase && boss.stateTimer > 70) { 
+                        boss.isShootingPhase = true;
+                        boss.stateTimer = 0;
+                    }
+
+                    if (boss.isShootingPhase && boss.cooldown === 0) {
+                        const dx = player.x - (boss.x + boss.width / 2);
+                        const dy = player.y - (boss.y + boss.height / 2);
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const bSpeed = 5.5;
+                        enemyBullets.push({
+                            x: boss.x + boss.width / 2,
+                            y: boss.y + boss.height,
+                            vx: (dx / distance) * bSpeed,
+                            vy: (dy / distance) * bSpeed,
+                            radius: 6,
+                            color: "#e67e22" 
+                        });
+                        boss.cooldown = 7; 
+                    }
+                } 
+                // --- 【第2形態】無限連続花火弾幕 ---
+                else if (boss.phase === 2) {
+                    if (boss.cooldown === 0) {
+                        const bulletCount = 16; 
+                        const bSpeed = 2.4;    
+
+                        for (let f = 0; f < 2; f++) {
+                            const startAngle = Math.random() * Math.PI;
+                            const randomSourceX = boss.x + Math.random() * boss.width;
+                            const randomSourceY = boss.y + Math.random() * boss.height;
+
+                            for (let k = 0; k < bulletCount; k++) {
+                                const angle = startAngle + (Math.PI * 2 / bulletCount) * k;
+                                enemyBullets.push({
+                                    x: randomSourceX, 
+                                    y: randomSourceY, 
+                                    vx: Math.sin(angle) * bSpeed,
+                                    vy: Math.cos(angle) * bSpeed,
+                                    radius: 5,
+                                    color: "#e67e22" 
+                                });
+                            }
+                        }
+                        
+                        boss.cooldown = 22 + Math.floor(Math.random() * 20); 
+                        playSound("shoot"); 
+                    }
+                }
+            }
+
+            // 自機弾とボスの衝突判定
+            playerBullets.forEach(bullet => {
+                if (!bullet.toRemove &&
+                    bullet.x > boss.x && bullet.x < boss.x + boss.width &&
+                    bullet.y > boss.y && bullet.y < boss.y + boss.height
+                ) {
+                    bullet.toRemove = true;
+                    boss.hp--;
+                    score += 50;
+                    playSound("hit");
+
+                    if (boss.hp <= 0) {
+                        if (boss.phase === 1) {
+                            boss.phase = 2;
+                            boss.hp = 160;     
+                            boss.maxHp = 160;  
+                            boss.cooldown = 60; 
+                            playSound("phase2"); 
+                        } else {
+                            boss.isDead = true;
+                            boss.explosionCount = 0;
+                            boss.nextExplosionDelay = 0;
+                            enemyBullets = [];
+                        }
+                    }
+                }
+            });
+        } 
+        else {
+            boss.nextExplosionDelay--;
+            if (boss.nextExplosionDelay <= 0 && boss.explosionCount < 6) {
+                const ex = boss.x + Math.random() * boss.width;
+                const ey = boss.y + Math.random() * boss.height;
+                const colors = ["#9b59b6", "#2ecc71", "#e74c3c", "#f1c40f"];
+                const randomColor = colors[Math.floor(Math.random() * colors.length)];
+                
+                createExplosion(ex, ey, randomColor, 20, 5);
+                playSound("explosion");
+                
+                boss.explosionCount++;
+                boss.nextExplosionDelay = 12; 
+            }
+
+            if (boss.explosionCount >= 6 && boss.nextExplosionDelay <= 0) {
+                createExplosion(boss.x + boss.width / 2, boss.y + boss.height / 2, "#fff", 50, 8);
+                playSound("big_explosion");
+                boss.active = false;
+                score += 20000;
+                gameState = "CLEAR";
+            }
+        }
+    }
+
+    // パーティクルの更新
+    particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= p.decay; 
+    });
+    particles = particles.filter(p => p.alpha > 0);
+
+    playerBullets = playerBullets.filter(b => !b.toRemove);
+}
+
+function draw() {
+    // 自機（円）
+    ctx.fillStyle = "#3498db";
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 自機弾
+    ctx.fillStyle = "#e67e22";
+    for (const bullet of playerBullets) {
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // 敵弾
+    for (const bullet of enemyBullets) {
+        ctx.fillStyle = bullet.color;
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // 通常の敵（三角形）
+    ctx.fillStyle = "#e74c3c";
+    for (const enemy of enemies) {
+        ctx.beginPath();
+        ctx.moveTo(enemy.x, enemy.y - enemy.height / 2); 
+        ctx.lineTo(enemy.x - enemy.width / 2, enemy.y + enemy.height / 2); 
+        ctx.lineTo(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2); 
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // ボス（台形）
+    if (boss.active) {
+        let showBoss = true;
+        if (boss.isDead && Math.floor(Date.now() / 50) % 2 === 0) {
+            showBoss = false; 
+        }
+
+        if (showBoss) {
+            ctx.fillStyle = boss.phase === 1 ? "#2ecc71" : "#9b59b6";
+            
+            ctx.beginPath();
+            const topLeft = boss.x + (boss.width - boss.topWidth) / 2;
+            const topRight = topLeft + boss.topWidth;
+            
+            ctx.moveTo(topLeft, boss.y); 
+            ctx.lineTo(topRight, boss.y); 
+            ctx.lineTo(boss.x + boss.width, boss.y + boss.height); 
+            ctx.lineTo(boss.x, boss.y + boss.height); 
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // ボスのHPバー
+        if (!boss.isDead) {
+            const barWidth = canvas.width - 40; 
+            const barX = 20;
+            const barY = 15;
+            const barHeight = 10;
+
+            ctx.fillStyle = "#7f8c8d"; 
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            
+            ctx.fillStyle = boss.phase === 1 ? "#2ecc71" : "#e74c3c"; 
+            ctx.fillRect(barX, barY, barWidth * (boss.hp / boss.maxHp), barHeight);
+        }
+    }
+
+    // パーティクルの描画
+    for (const p of particles) {
+        ctx.save();
+        ctx.globalAlpha = p.alpha; 
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // スコア
+    ctx.fillStyle = "#fff";
+    ctx.font = "20px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(`SCORE: ${score}`, 10, (boss.active && !boss.isDead) ? 50 : 30);
+    
+    if (score < 10000) {
+        ctx.fillStyle = "#aaa";
+        ctx.font = "12px sans-serif";
+        ctx.fillText(`TARGET: 10000点 でボス出現`, 10, 55);
+    }
+}
+
+function drawGameOver() {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#e74c3c";
+    ctx.font = "30px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("[ GAME OVER ]", canvas.width / 2, canvas.height / 2 - 20);
+    
+    ctx.fillStyle = "#fff";
+    ctx.font = "20px sans-serif";
+    ctx.fillText(`FINAL SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+    ctx.font = "16px sans-serif";
+    ctx.fillText("R キーを押してその場でリトライ", canvas.width / 2, canvas.height / 2 + 60);
+}
+
+function drawGameClear() {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#f1c40f";
+    ctx.font = "35px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("== ALL CLEAR ==", canvas.width / 2, canvas.height / 2 - 20);
+    
+    ctx.fillStyle = "#fff";
+    ctx.font = "22px sans-serif";
+    ctx.fillText(`* HIGH SCORE: ${score} *`, canvas.width / 2, canvas.height / 2 + 30);
+    ctx.font = "16px sans-serif";
+    ctx.fillText("R キーを押してもう一度遊ぶ", canvas.width / 2, canvas.height / 2 + 80);
+}
+
+window.addEventListener("click", () => {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+});
+
+gameLoop();
+</script>
+
+</body>
+</html>
