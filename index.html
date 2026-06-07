@@ -37,13 +37,12 @@
 <body>
 
 <canvas id="gameCanvas" width="400" height="600"></canvas>
-<div id="startMessage">※画面を一度クリックすると音が鳴るようになります</div>
+<div id="startMessage">※音が出ます。</div>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 【変更】初期状態をゲームプレイではなく「TITLE（タイトル画面）」に設定
 let gameState = "TITLE"; 
 let score = 0;
 let animationId = null; 
@@ -52,11 +51,10 @@ const keys = {};
 window.addEventListener("keydown", e => {
     keys[e.code] = true;
     
-    // 【変更】タイトル画面、ゲームオーバー、クリア時に「KeyR」が押されたときの挙動
     if (gameState === "TITLE" && e.code === "KeyR") {
-        startGame(); // タイトル画面からゲーム開始
+        startGame(); 
     } else if ((gameState === "GAMEOVER" || gameState === "CLEAR") && e.code === "KeyR") {
-        backToTitle(); // 終了画面からタイトル画面へ戻る
+        backToTitle(); 
     }
 });
 window.addEventListener("keyup", e => keys[e.code] = false);
@@ -166,7 +164,6 @@ let enemies = [];
 let particles = []; 
 let enemyTimer = 0;
 
-// 【新規】タイトル画面からゲームを本稼働させるためのリセット＆スタート関数
 function startGame() {
     gameState = "PLAYING";
     score = 0;
@@ -207,7 +204,6 @@ function startGame() {
     }
 }
 
-// 【新規】ゲーム終了後にタイトル画面へ戻る関数
 function backToTitle() {
     gameState = "TITLE";
     for (let key in keys) {
@@ -235,7 +231,6 @@ function createExplosion(x, y, color, count = 8, speedMax = 3) {
 function gameLoop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 【変更】状態管理に「TITLE」を追加して分岐
     if (gameState === "TITLE") {
         drawTitle();
         animationId = requestAnimationFrame(gameLoop);
@@ -257,13 +252,11 @@ function update() {
         boss.active = true;
     }
 
-    // 自機の移動制限（矢印キー ＆ WASDキー）
     if ((keys["ArrowLeft"] || keys["KeyA"]) && player.x > player.radius) player.x -= player.speed;
     if ((keys["ArrowRight"] || keys["KeyD"]) && player.x < canvas.width - player.radius) player.x += player.speed;
     if ((keys["ArrowUp"] || keys["KeyW"]) && player.y > player.radius) player.y -= player.speed;
     if ((keys["ArrowDown"] || keys["KeyS"]) && player.y < canvas.height - player.radius) player.y += player.speed;
 
-    // 自機の弾発射（3way）
     if (player.cooldown > 0) player.cooldown--;
     if (keys["Space"] && player.cooldown === 0) {
         const bulletSpeed = 8;
@@ -283,7 +276,6 @@ function update() {
         player.cooldown = 6;
     }
 
-    // 自機の弾の移動
     playerBullets.forEach(b => {
         b.x += b.vx;
         b.y += b.vy;
@@ -292,7 +284,6 @@ function update() {
         }
     });
 
-    // 敵の弾の移動と自機への衝突判定
     enemyBullets.forEach(b => {
         b.x += b.vx;
         b.y += b.vy;
@@ -326,13 +317,11 @@ function update() {
         }
     }
 
-    // 通常の敵（三角形）の移動と判定
     enemies.forEach(enemy => {
         enemy.y += enemy.speed;
         enemy.angle += enemy.waveSpeed;
         enemy.x = enemy.startX + Math.sin(enemy.angle) * enemy.waveRange;
 
-        // 敵の反撃
         enemy.shootCooldown--;
         if (enemy.shootCooldown <= 0 && enemy.y > 0 && enemy.y < canvas.height - 200) {
             enemyBullets.push({
@@ -346,7 +335,6 @@ function update() {
             enemy.shootCooldown = 70; 
         }
 
-        // 自機との衝突判定
         if (
             enemy.x - enemy.width/2 < player.x + player.radius &&
             enemy.x + enemy.width/2 > player.x - player.radius &&
@@ -357,7 +345,6 @@ function update() {
             gameState = "GAMEOVER";
         }
 
-        // 自機弾との衝突判定
         playerBullets.forEach(bullet => {
             if (!bullet.toRemove &&
                 bullet.x > enemy.x - enemy.width/2 && bullet.x < enemy.x + enemy.width/2 &&
@@ -447,7 +434,6 @@ function update() {
                 }
             }
 
-            // 自機弾とボスの衝突判定
             playerBullets.forEach(bullet => {
                 if (!bullet.toRemove &&
                     bullet.x > boss.x && bullet.x < boss.x + boss.width &&
@@ -500,7 +486,6 @@ function update() {
         }
     }
 
-    // パーティクルの更新
     particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -512,13 +497,11 @@ function update() {
 }
 
 function draw() {
-    // 自機（円）
     ctx.fillStyle = "#3498db";
     ctx.beginPath();
     ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // 自機弾
     ctx.fillStyle = "#e67e22";
     for (const bullet of playerBullets) {
         ctx.beginPath();
@@ -526,7 +509,6 @@ function draw() {
         ctx.fill();
     }
 
-    // 敵弾
     for (const bullet of enemyBullets) {
         ctx.fillStyle = bullet.color;
         ctx.beginPath();
@@ -534,7 +516,6 @@ function draw() {
         ctx.fill();
     }
 
-    // 通常の敵（三角形）
     ctx.fillStyle = "#e74c3c";
     for (const enemy of enemies) {
         ctx.beginPath();
@@ -545,7 +526,6 @@ function draw() {
         ctx.fill();
     }
 
-    // ボス（台形）
     if (boss.active) {
         let showBoss = true;
         if (boss.isDead && Math.floor(Date.now() / 50) % 2 === 0) {
@@ -567,7 +547,6 @@ function draw() {
             ctx.fill();
         }
 
-        // ボスのHPバー
         if (!boss.isDead) {
             const barWidth = canvas.width - 40; 
             const barX = 20;
@@ -582,7 +561,6 @@ function draw() {
         }
     }
 
-    // パーティクルの描画
     for (const p of particles) {
         ctx.save();
         ctx.globalAlpha = p.alpha; 
@@ -593,7 +571,6 @@ function draw() {
         ctx.restore();
     }
 
-    // スコア
     ctx.fillStyle = "#fff";
     ctx.font = "20px sans-serif";
     ctx.textAlign = "left";
@@ -606,22 +583,19 @@ function draw() {
     }
 }
 
-// 【新規】タイトル画面の描画処理（操作方法をきれいに配置）
+// 【変更】最下部のフッターテキスト（Target score～）をきれいに削除
 function drawTitle() {
-    // タイトルロゴ
     ctx.fillStyle = "#3498db";
     ctx.font = "bold 40px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("Danmaku STG", canvas.width / 2, canvas.height / 2 - 120);
 
-    // 操作説明用フレームの背景
     ctx.fillStyle = "#1e1e1e";
     ctx.fillRect(40, canvas.height / 2 - 60, canvas.width - 80, 150);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
     ctx.strokeRect(40, canvas.height / 2 - 60, canvas.width - 80, 150);
 
-    // 操作テキスト
     ctx.fillStyle = "#fff";
     ctx.font = "bold 16px sans-serif";
     ctx.textAlign = "center";
@@ -637,19 +611,12 @@ function drawTitle() {
     ctx.fillText("↑↓←→  /  W A S D", 175, canvas.height / 2);
     ctx.fillText("SPACE キー", 175, canvas.height / 2 + 30);
 
-    // スタート案内（点滅風演出用に現在時刻を利用）
     ctx.fillStyle = Math.floor(Date.now() / 400) % 2 === 0 ? "#fff" : "#888";
     ctx.font = "bold 18px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("Press [ R ] to Start !!", canvas.width / 2, canvas.height / 2 + 150);
-
-    // フッター
-    ctx.fillStyle = "#555";
-    ctx.font = "12px sans-serif";
-    ctx.fillText("Target score 10,000 pts to summon Boss.", canvas.width / 2, canvas.height - 40);
 }
 
-// 【変更】F5やその場直接ではなく、一度タイトル画面に戻る案内へ変更
 function drawGameOver() {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -666,7 +633,6 @@ function drawGameOver() {
     ctx.fillText("R キーを押してタイトル画面に戻る", canvas.width / 2, canvas.height / 2 + 60);
 }
 
-// 【変更】F5やその場直接ではなく、一度タイトル画面に戻る案内へ変更
 function drawGameClear() {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
