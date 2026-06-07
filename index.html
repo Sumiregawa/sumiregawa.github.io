@@ -43,22 +43,25 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-let gameState = "PLAYING"; 
+// 【変更】初期状態をゲームプレイではなく「TITLE（タイトル画面）」に設定
+let gameState = "TITLE"; 
 let score = 0;
-let animationId = null; // 【新規】ループ管理用ID
+let animationId = null; 
 
 const keys = {};
 window.addEventListener("keydown", e => {
     keys[e.code] = true;
     
-    // 【修正】ゲームオーバーまたはクリア時に「KeyR」が押されたら確実にリスタート関数を呼ぶ
-    if ((gameState === "GAMEOVER" || gameState === "CLEAR") && e.code === "KeyR") {
-        resetGame();
+    // 【変更】タイトル画面、ゲームオーバー、クリア時に「KeyR」が押されたときの挙動
+    if (gameState === "TITLE" && e.code === "KeyR") {
+        startGame(); // タイトル画面からゲーム開始
+    } else if ((gameState === "GAMEOVER" || gameState === "CLEAR") && e.code === "KeyR") {
+        backToTitle(); // 終了画面からタイトル画面へ戻る
     }
 });
 window.addEventListener("keyup", e => keys[e.code] = false);
 
-// --- ?? 効果音再生システム ---
+// --- 🔊 効果音再生システム ---
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
 function playSound(type) {
@@ -163,14 +166,8 @@ let enemies = [];
 let particles = []; 
 let enemyTimer = 0;
 
-// 【修正】Rキーリスタートを完全に動作させるためのゲーム初期化関数
-function resetGame() {
-    // 既存のループアニメーションを確実に一度止める
-    if (animationId) {
-        cancelAnimationFrame(animationId);
-    }
-
-    // 状態とパラメータをすべて初期化
+// 【新規】タイトル画面からゲームを本稼働させるためのリセット＆スタート関数
+function startGame() {
     gameState = "PLAYING";
     score = 0;
     player.x = canvas.width / 2;
@@ -205,13 +202,17 @@ function resetGame() {
     particles = [];
     enemyTimer = 0;
 
-    // キー入力状態も一度クリア
     for (let key in keys) {
         keys[key] = false;
     }
+}
 
-    // ループを再始動
-    gameLoop();
+// 【新規】ゲーム終了後にタイトル画面へ戻る関数
+function backToTitle() {
+    gameState = "TITLE";
+    for (let key in keys) {
+        keys[key] = false;
+    }
 }
 
 function createExplosion(x, y, color, count = 8, speedMax = 3) {
@@ -234,13 +235,17 @@ function createExplosion(x, y, color, count = 8, speedMax = 3) {
 function gameLoop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (gameState === "PLAYING") {
+    // 【変更】状態管理に「TITLE」を追加して分岐
+    if (gameState === "TITLE") {
+        drawTitle();
+        animationId = requestAnimationFrame(gameLoop);
+    } else if (gameState === "PLAYING") {
         update();
         draw();
-        animationId = requestAnimationFrame(gameLoop); // IDを保存
+        animationId = requestAnimationFrame(gameLoop); 
     } else if (gameState === "GAMEOVER") {
         drawGameOver();
-        animationId = requestAnimationFrame(gameLoop); // 画面遷移後も描画更新のために維持
+        animationId = requestAnimationFrame(gameLoop); 
     } else if (gameState === "CLEAR") {
         drawGameClear();
         animationId = requestAnimationFrame(gameLoop);
@@ -248,7 +253,6 @@ function gameLoop() {
 }
 
 function update() {
-    // 10000点を超えたらボス出現
     if (score >= 10000 && !boss.active && boss.phase === 1 && boss.hp > 0) {
         boss.active = true;
     }
@@ -376,7 +380,6 @@ function update() {
             if (boss.y < boss.targetY) {
                 boss.y += 1; 
             } else {
-                // 左右移動
                 const currentSpeed = boss.phase === 1 ? boss.speed : boss.speed * 1.3;
                 boss.x += currentSpeed * boss.dir;
                 if (boss.x <= 10 || boss.x >= canvas.width - boss.width - 10) {
@@ -603,6 +606,50 @@ function draw() {
     }
 }
 
+// 【新規】タイトル画面の描画処理（操作方法をきれいに配置）
+function drawTitle() {
+    // タイトルロゴ
+    ctx.fillStyle = "#3498db";
+    ctx.font = "bold 40px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Danmaku STG", canvas.width / 2, canvas.height / 2 - 120);
+
+    // 操作説明用フレームの背景
+    ctx.fillStyle = "#1e1e1e";
+    ctx.fillRect(40, canvas.height / 2 - 60, canvas.width - 80, 150);
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(40, canvas.height / 2 - 60, canvas.width - 80, 150);
+
+    // 操作テキスト
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("- CONTROLS -", canvas.width / 2, canvas.height / 2 - 35);
+
+    ctx.font = "14px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#bbb";
+    ctx.fillText("移動 (MOVE)   :", 65, canvas.height / 2);
+    ctx.fillText("攻撃 (SHOT)   :", 65, canvas.height / 2 + 30);
+
+    ctx.fillStyle = "#f1c40f";
+    ctx.fillText("↑↓←→  /  W A S D", 175, canvas.height / 2);
+    ctx.fillText("SPACE キー", 175, canvas.height / 2 + 30);
+
+    // スタート案内（点滅風演出用に現在時刻を利用）
+    ctx.fillStyle = Math.floor(Date.now() / 400) % 2 === 0 ? "#fff" : "#888";
+    ctx.font = "bold 18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Press [ R ] to Start !!", canvas.width / 2, canvas.height / 2 + 150);
+
+    // フッター
+    ctx.fillStyle = "#555";
+    ctx.font = "12px sans-serif";
+    ctx.fillText("Target score 10,000 pts to summon Boss.", canvas.width / 2, canvas.height - 40);
+}
+
+// 【変更】F5やその場直接ではなく、一度タイトル画面に戻る案内へ変更
 function drawGameOver() {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -616,9 +663,10 @@ function drawGameOver() {
     ctx.font = "20px sans-serif";
     ctx.fillText(`FINAL SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
     ctx.font = "16px sans-serif";
-    ctx.fillText("R キーを押してその場でリトライ", canvas.width / 2, canvas.height / 2 + 60);
+    ctx.fillText("R キーを押してタイトル画面に戻る", canvas.width / 2, canvas.height / 2 + 60);
 }
 
+// 【変更】F5やその場直接ではなく、一度タイトル画面に戻る案内へ変更
 function drawGameClear() {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -632,7 +680,7 @@ function drawGameClear() {
     ctx.font = "22px sans-serif";
     ctx.fillText(`* HIGH SCORE: ${score} *`, canvas.width / 2, canvas.height / 2 + 30);
     ctx.font = "16px sans-serif";
-    ctx.fillText("R キーを押してもう一度遊ぶ", canvas.width / 2, canvas.height / 2 + 80);
+    ctx.fillText("R キーを押してタイトル画面に戻る", canvas.width / 2, canvas.height / 2 + 80);
 }
 
 window.addEventListener("click", () => {
